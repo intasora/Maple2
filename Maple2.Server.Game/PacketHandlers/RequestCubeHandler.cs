@@ -548,6 +548,8 @@ public class RequestCubeHandler : PacketHandler<GameSession> {
         byte height = home.IsPlanner ? home.PlannerHeight : home.Height;
         layout = db.SaveHomeLayout(new HomeLayout(slot, name, area, height, DateTimeOffset.Now, plot.Cubes.Values.ToList()));
         if (layout is null) {
+            Logger.Error("Failed to save layout for {AccountId}", session.AccountId);
+            session.Send(CubePacket.Error(UgcMapError.s_ugcmap_db));
             return;
         }
         home.Layouts.Add(layout);
@@ -581,15 +583,22 @@ public class RequestCubeHandler : PacketHandler<GameSession> {
 
             using GameStorage.Request db = session.GameStorage.Context();
             layout = db.GetHomeLayout(session.Housing.StagedItemBlueprint.BlueprintUid);
+            if (layout is null) {
+                Logger.Error("Failed to load layout for {AccountId}", session.AccountId);
+                session.Send(CubePacket.Error(UgcMapError.s_ugcmap_db));
+                return;
+            }
         } else {
             layout = home.Layouts.FirstOrDefault(homeLayout => homeLayout.Id == slot);
-        }
-        if (layout is null) {
-            return;
+            if (layout is null) {
+                Logger.Error("Failed to find layout {Slot} for {AccountId}", slot, session.AccountId);
+                session.Send(CubePacket.Error(UgcMapError.s_ugcmap_db));
+                return;
+            }
         }
 
         session.Housing.StagedItemBlueprint = null;
-        session.Housing.ApplyLayout(plot, layout);
+        session.Housing.ApplyLayout(plot, layout, isBlueprint: slot is 0);
     }
 
 
@@ -622,15 +631,22 @@ public class RequestCubeHandler : PacketHandler<GameSession> {
             return;
         }
 
-        int negAmount = -200;
+        if (!TableMetadata.UgcDesignTable.Entries.TryGetValue(Constant.BlueprintId, out UgcDesignTable.Entry? design)) {
+            Logger.Error("Failed to find design {BlueprintId}", Constant.BlueprintId);
+            return;
+        }
+
+        long blueprintCost = design.CreatePrice;
+
+        long negAmount = -1 * blueprintCost;
         if (session.Currency.CanAddMeret(negAmount) != negAmount) {
             session.Send(CubePacket.Error(UgcMapError.s_err_ugcmap_not_enough_meso_balance));
             return;
         }
 
-        session.Currency.Meret -= 200;
+        session.Currency.Meret -= blueprintCost;
 
-        Item? item = session.Field.ItemDrop.CreateItem(35200000);
+        Item? item = session.Field.ItemDrop.CreateItem(Constant.BlueprintId);
         if (item is null) {
             return;
         }
@@ -640,8 +656,15 @@ public class RequestCubeHandler : PacketHandler<GameSession> {
         byte height = home.PlannerHeight;
         using GameStorage.Request db = session.GameStorage.Context();
 
-        HomeLayout? layout = db.SaveHomeLayout(new HomeLayout(0, "Blueprint", area, height, DateTimeOffset.Now, plot.Cubes.Values.ToList()));
+        var homeLayout = new HomeLayout(0, "Blueprint", area, height, DateTimeOffset.Now, plot.Cubes.Values.ToList()) {
+            Background = home.Background,
+            Lighting = home.Lighting,
+            Camera = home.Camera,
+        };
+        HomeLayout? layout = db.SaveHomeLayout(homeLayout);
         if (layout is null) {
+            Logger.Error("Failed to save layout for {AccountId}", session.AccountId);
+            session.Send(CubePacket.Error(UgcMapError.s_ugcmap_db));
             return;
         }
 
@@ -691,8 +714,15 @@ public class RequestCubeHandler : PacketHandler<GameSession> {
 
         byte area = home.PlannerArea;
         byte height = home.PlannerHeight;
-        layout = db.SaveHomeLayout(new HomeLayout(slot, name, area, height, DateTimeOffset.Now, plot.Cubes.Values.ToList()));
+        var homeLayout = new HomeLayout(slot, name, area, height, DateTimeOffset.Now, plot.Cubes.Values.ToList()) {
+            Background = home.Background,
+            Lighting = home.Lighting,
+            Camera = home.Camera,
+        };
+        layout = db.SaveHomeLayout(homeLayout);
         if (layout is null) {
+            Logger.Error("Failed to save layout for {AccountId}", session.AccountId);
+            session.Send(CubePacket.Error(UgcMapError.s_ugcmap_db));
             return;
         }
         home.Blueprints.Add(layout);
@@ -721,6 +751,6 @@ public class RequestCubeHandler : PacketHandler<GameSession> {
             return;
         }
 
-        session.Housing.ApplyLayout(plot, layout);
+        session.Housing.ApplyLayout(plot, layout, isBlueprint: true);
     }
 }
